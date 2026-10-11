@@ -11,9 +11,10 @@ x-eval: &eval
     - ${STAND_DIR:-../paypilot-stand}/app:/course/app:ro
 
 x-eval-env: &eval-env
-  SET: ${SET:-l03}
+  SET: ${SET:-l05}
   GATE: ${GATE:-daily}
   CASE: ${CASE:-}
+  SUMMARIZE_AFTER: ${SUMMARIZE_AFTER:-}
   PYTHONDONTWRITEBYTECODE: "1"
 
 services:

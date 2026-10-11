@@ -21,6 +21,7 @@ SETS_DIR = HERE / "sets"
 REPORTS_DIR = HERE / "reports"
 RUBRIC_VERSION = os.environ.get("RUBRIC_VERSION", "rubric.v1")
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL") or "not-used"
+SUMMARIZE_SPAN = "agent.summarize"
 
 
 
@@ -49,64 +50,144 @@ def _judge(question, answer, rubric):
 def evaluate(case: dict, results: list[dict]) -> A.Verdict:
     ""
     meta = case["additional_metadata"]
-    name = meta["assertion"]
+    if meta["assertion"] == "dialog":
+        return _dialog(case, results)
     answer = results[-1]["answer"] if results else ""
     tree = results[-1].get("trace") or {}
-    expected = case.get("expected_output")
+    return _apply(meta["assertion"], meta, case, answer, tree, results)
+
+
+def _apply(name: str, p: dict, case: dict, answer: str, tree: dict,
+           results: list[dict]) -> A.Verdict:
+    ""
+    expected = p.get("expected", case.get("expected_output"))
 
     if name in ("equals", "exact"):
         return A.level1_exact(answer, expected)
     if name == "exact_tool_calls":
-        return A.tool_calls_exact(tree, meta.get("expected_tool_calls", []))
+        return A.tool_calls_exact(tree, p.get("expected_tool_calls", []))
     if name in ("numeric", "number", "amount"):
-        return A.level2_numeric(answer, meta.get("expected_number", expected),
-                                meta.get("tolerance", 0.01))
+        return A.level2_numeric(answer, p.get("expected_number", expected),
+                                p.get("tolerance", 0.01))
     if name == "budget":
-        return _budget(meta, results)
+        return _budget(p, results)
     if name in ("contains", "pattern"):
-        return A.level3_contains(answer, expected or meta.get("reference", ""))
+        return A.level3_contains(answer, expected or p.get("reference", ""))
     if name == "regex":
-        return A.level3_regex(answer, meta["pattern"])
+        return A.level3_regex(answer, p["pattern"])
     if name in ("not_contains", "absent"):
-        return A.level4_not_contains(answer, meta["forbidden"])
+        return A.level4_not_contains(answer, p["forbidden"])
     if name == "not_regex":
-        return A.level4_not_regex(answer, meta["forbidden_pattern"])
+        return A.level4_not_regex(answer, p["forbidden_pattern"])
     if name == "tool_result_numeric":
-        return A.tool_result_numeric(tree, meta["tool"], meta["field"],
-                                     meta["expected_number"],
-                                     meta.get("tolerance", 0.01))
+        return A.tool_result_numeric(tree, p["tool"], p["field"],
+                                     p["expected_number"],
+                                     p.get("tolerance", 0.01))
     if name == "tool_grounded_numeric":
-        return A.tool_grounded_numeric(tree, answer, meta["tool"],
-                                       meta["field"], meta["expected_number"],
-                                       meta.get("tolerance", 0.01))
+        return A.tool_grounded_numeric(tree, answer, p["tool"],
+                                       p["field"], p["expected_number"],
+                                       p.get("tolerance", 0.01))
     if name == "tool_result_flag":
-        return A.tool_result_flag(tree, meta["tool"], meta["field"],
-                                  meta["expected_flag"])
+        return A.tool_result_flag(tree, p["tool"], p["field"],
+                                  p["expected_flag"])
     if name == "tool_called_with":
-        return A.tool_called_with(tree, meta["tool"], meta["args"])
+        return A.tool_called_with(tree, p["tool"], p["args"])
     if name == "tool_sequence":
-        return A.tool_sequence(tree, meta.get("must_include"),
-                               meta.get("must_exclude"),
-                               tuple(meta["before"]) if meta.get("before") else None)
+        return A.tool_sequence(tree, p.get("must_include"),
+                               p.get("must_exclude"),
+                               tuple(p["before"]) if p.get("before") else None)
     if name == "state_row":
-        rows = stand.state(meta["table"])
-        return A.state_row(rows, meta.get("where", {}),
-                           meta.get("expect_fields", {}),
-                           meta.get("expected_count"))
+        rows = stand.state(p["table"])
+        return A.state_row(rows, p.get("where", {}),
+                           p.get("expect_fields", {}),
+                           p.get("expected_count"))
     if name == "tool_call_count":
-        return A.tool_call_count(tree, meta["tool"], meta["expected_count"])
+        return A.tool_call_count(tree, p["tool"], p["expected_count"])
+    if name == "has_span":
+        return A.has_span(tree, p["span"])
     if name == "no_span":
-        return A.level4_no_span(tree, meta["forbidden_span"])
+        return A.level4_no_span(tree, p["forbidden_span"])
     if name == "similar":
-        return A.level5_similar(answer, meta.get("reference", expected or ""),
-                                meta.get("threshold", 0.5))
+        return A.level5_similar(answer, p.get("reference", expected or ""),
+                                p.get("threshold", 0.5))
     if name == "k_of_n":
         hits = [A.level3_contains(r["answer"], expected).passed for r in results]
-        return A.level6_k_of_n(hits, meta.get("k", 4))
+        return A.level6_k_of_n(hits, p.get("k", 4))
     if name == "judge":
-        return A.level7_judge(answer, meta.get("rubric", ""),
+        return A.level7_judge(answer, p.get("rubric", ""),
                               case.get("input", ""), _judge)
     return A.Verdict(False, 0, name, f"no handler for assertion {name!r}")
+
+
+def _dialog(case: dict, results: list[dict]) -> A.Verdict:
+    ""
+    verdicts = []
+    for i, run in enumerate(results, 1):
+        v = _dialog_run(case, run)
+        if not v.passed and len(results) > 1:
+            v.detail = f"run {i}/{len(results)}: {v.detail}"
+        verdicts.append(v)
+        if not v.passed:
+            break
+    return verdicts[-1]
+
+
+def _dialog_run(case: dict, run: dict) -> A.Verdict:
+    meta = case["additional_metadata"]
+    turns = run["turns"]
+    outcomes = []
+    for chk in meta["checks"]:
+        wanted = chk.get("turns") or [chk["turn"]]
+        tried = []
+        for t in wanted:
+            if t > len(turns):
+                v = A.Verdict(False, 1, chk["assertion"],
+                              f"the dialog has only {len(turns)} turns")
+            else:
+                at = turns[t - 1]
+                v = _apply(chk["assertion"], chk, case, at["answer"],
+                           at.get("trace") or {}, [{"answer": at["answer"]}])
+            tried.append((t, v))
+        # `turns` is an "any of" list: one turn that passes is enough
+        t, v = next(((t, v) for t, v in tried if v.passed), tried[0])
+        outcomes.append({
+            "turn": t if len(wanted) == 1 or v.passed else wanted,
+            "assertion": chk["assertion"],
+            "label": chk.get("label", ""),
+            "defect": chk.get("defect", ""),
+            "precondition": bool(chk.get("precondition")),
+            "passed": v.passed,
+            "level": v.level,
+            "detail": v.detail,
+            "hint": chk.get("hint", ""),
+        })
+
+    broken = [o for o in outcomes if o["precondition"] and not o["passed"]]
+    if broken:
+        o = broken[0]
+        where = _turn_text(o["turn"])
+        detail = f"precondition failed at {where}: {o['detail']}"
+        if o["hint"]:
+            detail += f". {o['hint']}"
+        return A.Verdict(False, 1, "precondition", detail, outcomes)
+
+    graded = [o for o in outcomes if not o["precondition"]]
+    failed = [o for o in graded if not o["passed"]]
+    level = max((o["level"] for o in graded), default=1)
+    if not failed:
+        return A.Verdict(True, level, "dialog",
+                         f"{len(graded)} checks over {len(turns)} turns", outcomes)
+    detail = "; ".join(
+        f"{_turn_text(o['turn'])}"
+        + (f" [{o['defect']}]" if o["defect"] else "")
+        + f" {o['detail']}" for o in failed)
+    return A.Verdict(False, level, "dialog", detail, outcomes)
+
+
+def _turn_text(turn) -> str:
+    if isinstance(turn, list):
+        return "turns " + "/".join(str(t) for t in turn)
+    return f"turn {turn}"
 
 
 def _budget(meta: dict, results: list[dict]) -> A.Verdict:
@@ -137,33 +218,74 @@ def _budget(meta: dict, results: list[dict]) -> A.Verdict:
 
 
 
+def _summarize_after(meta: dict) -> int | None:
+    ""
+    raw = os.environ.get("SUMMARIZE_AFTER", "").strip()
+    if raw:
+        return int(raw)
+    return meta.get("summarize_after")
+
+
+def _one_run(case: dict) -> dict:
+    meta = case["additional_metadata"]
+    ctx = case.get("context") or {}
+    stand.reset()
+    if ctx.get("clock"):
+        stand.set_clock(ctx["clock"])
+    steps = _summarize_after(meta)
+    if steps is not None:
+        stand.set_summarize_after(steps)
+    customer = ctx.get("customer_id")
+    t0 = time.time()
+    if case.get("turns"):
+        asked = [t["content"] for t in case["turns"] if t["role"] == "user"]
+        outs = stand.dialog(asked, customer)
+        turns = [{"question": q,
+                  "answer": o.get("answer", ""),
+                  "usage": o.get("usage") or {},
+                  "trace": stand.trace(o["request_id"])}
+                 for q, o in zip(asked, outs)]
+    else:
+        out = stand.chat(case["input"], customer_id=customer)
+        turns = [{"question": case["input"],
+                  "answer": out.get("answer", ""),
+                  "usage": out.get("usage") or {},
+                  "trace": stand.trace(out["request_id"])}]
+    tokens = {"input_tokens": sum(t["usage"].get("input_tokens", 0) for t in turns),
+              "output_tokens": sum(t["usage"].get("output_tokens", 0) for t in turns)}
+    return {
+        "answer": turns[-1]["answer"],
+        "usage": tokens,
+        "latency_ms": int((time.time() - t0) * 1000),
+        "trace": turns[-1]["trace"],
+        "turns": turns,
+    }
+
+
+def _transcript(run: dict) -> list[dict]:
+    return [{"turn": i,
+             "user": t["question"],
+             "answer": t["answer"][:400],
+             "summarized": stand.has_span(t["trace"] or {}, SUMMARIZE_SPAN),
+             "tools": [c["name"] for c in stand.tool_calls(t["trace"] or {})]}
+            for i, t in enumerate(run["turns"], 1)]
+
+
 def run_case(case: dict) -> dict:
     meta = case["additional_metadata"]
     runs = int(meta.get("runs", 1))
     results = []
-    for _ in range(runs):
-        stand.reset()
-        t0 = time.time()
-        customer = (case.get("context") or {}).get("customer_id")
-        if case.get("turns"):
-            turns = [t["content"] for t in case["turns"] if t["role"] == "user"]
-            outs = stand.dialog(turns, customer)
-            last = outs[-1]
-        else:
-            last = stand.chat(case["input"], customer_id=customer)
-        results.append({
-            "answer": last.get("answer", ""),
-            "usage": last.get("usage", {"input_tokens": 0, "output_tokens": 0}),
-            "latency_ms": int((time.time() - t0) * 1000),
-            "trace": stand.trace(last["request_id"]),
-        })
+    skipped = False
     try:
+        for _ in range(runs):
+            results.append(_one_run(case))
         verdict = evaluate(case, results)
-        skipped = False
     except JudgeUnavailable as e:
         verdict = A.Verdict(False, 7, "judge", str(e))
         skipped = True
-    return {
+    except stand.StandError as e:
+        verdict = A.Verdict(False, 1, "stand_error", str(e))
+    row = {
         "skipped": skipped,
         "id": case["id"],
         "layer": meta["layer"],
@@ -180,10 +302,13 @@ def run_case(case: dict) -> dict:
         "tool_calls": (stand.tool_calls(results[-1].get("trace") or {})
                        if results else []),
     }
+    if case.get("turns") and results:
+        row["transcript"] = _transcript(results[-1])
+    return row
 
 
 def main() -> int:
-    set_name = os.environ.get("SET", "l03_reference")
+    set_name = os.environ.get("SET", "l05")
     gate = os.environ.get("GATE", "")
     only = {x.strip() for x in os.environ.get("CASE", "").split(",") if x.strip()}
     path = SETS_DIR / f"{set_name}.jsonl"

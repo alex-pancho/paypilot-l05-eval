@@ -68,6 +68,35 @@ def _validate(case: dict, where: str) -> None:
         for t in case["turns"]:
             if t.get("role") not in ("user", "assistant"):
                 raise SetError(f"{where}: bad turn role {t.get('role')!r}")
+    if meta["assertion"] == "dialog":
+        _validate_dialog(case, meta, where)
+    if "summarize_after" in meta and not (
+            isinstance(meta["summarize_after"], int) and meta["summarize_after"] > 0):
+        raise SetError(f"{where}: summarize_after must be a positive integer")
+
+
+def _validate_dialog(case: dict, meta: dict, where: str) -> None:
+    ""
+    if not case.get("turns"):
+        raise SetError(f"{where}: assertion 'dialog' needs turns")
+    n_user = sum(1 for t in case["turns"] if t["role"] == "user")
+    checks = meta.get("checks")
+    if not checks:
+        raise SetError(f"{where}: assertion 'dialog' needs additional_metadata.checks")
+    if all(c.get("precondition") for c in checks):
+        raise SetError(f"{where}: a dialog needs at least one check that is "
+                       "not a precondition")
+    for i, c in enumerate(checks, 1):
+        at = f"{where}: checks[{i}]"
+        if c.get("assertion") not in NAME_TO_LEVEL or c["assertion"] == "dialog":
+            raise SetError(f"{at}: unknown assertion {c.get('assertion')!r}")
+        turns = c.get("turns") or ([c["turn"]] if c.get("turn") else [])
+        if not turns:
+            raise SetError(f"{at}: needs turn (1-based) or turns")
+        for t in turns:
+            if not isinstance(t, int) or not 1 <= t <= n_user:
+                raise SetError(f"{at}: turn {t!r} is outside 1..{n_user} "
+                               "(user turns are counted)")
 
 
 def set_hash(path: str | Path) -> str:
@@ -79,9 +108,16 @@ def set_hash(path: str | Path) -> str:
 def summarise(cases: list[dict]) -> dict:
     ""
     meta = [c.get("additional_metadata", {}) for c in cases]
-    levels = {NAME_TO_LEVEL[m["assertion"]] for m in meta}
+    levels = set()
+    for m in meta:
+        if m["assertion"] == "dialog":
+            levels |= {NAME_TO_LEVEL[c["assertion"]] for c in m["checks"]
+                       if not c.get("precondition")}
+        else:
+            levels.add(NAME_TO_LEVEL[m["assertion"]])
     return {
         "cases": len(cases),
+        "multi_turn": sum(1 for c in cases if c.get("turns")),
         "layers": _count(m["layer"] for m in meta),
         "oracles": _count(m["oracle"] for m in meta),
         "sources": _count(m["source"] for m in meta),

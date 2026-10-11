@@ -1,6 +1,6 @@
 ""
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 LEVELS = {
     1: "exact",
@@ -20,9 +20,13 @@ NAME_TO_LEVEL = {
     "tool_result_numeric": 2, "tool_result_flag": 1, "tool_call_count": 1,
     "tool_grounded_numeric": 2, "tool_called_with": 1,
     "state_row": 1, "tool_sequence": 3,
+    "has_span": 1,
     "similar": 5,
     "k_of_n": 6,
     "judge": 7,
+    # діалог: верхній рівень лише збирає перевірки по ходах, а рівень кожної
+    # береться з самої перевірки (див. loader.summarise)
+    "dialog": 3,
 }
 
 
@@ -32,10 +36,14 @@ class Verdict:
     level: int
     assertion: str
     detail: str
+    checks: list = field(default_factory=list)
 
     def as_dict(self):
-        return {"passed": self.passed, "level": self.level,
-                "assertion": self.assertion, "detail": self.detail}
+        out = {"passed": self.passed, "level": self.level,
+               "assertion": self.assertion, "detail": self.detail}
+        if self.checks:
+            out["checks"] = self.checks
+        return out
 
 
 _NUM_RE = re.compile(r"-?\d[\d\s,]*(?:\.\d+)?")
@@ -98,6 +106,14 @@ def level4_no_span(trace: dict, span_name: str) -> Verdict:
     present = _has_span(trace, span_name)
     return Verdict(not present, 4, "no_span",
                    "" if not present else f"span {span_name} should not be there")
+
+
+def has_span(trace: dict, span_name: str) -> Verdict:
+    ""
+    present = _has_span(trace, span_name)
+    return Verdict(present, 1, "has_span",
+                   f"span {span_name} present" if present
+                   else f"span {span_name} not found in the trace")
 
 
 def _has_span(node: dict, name: str) -> bool:

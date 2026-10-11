@@ -20,6 +20,9 @@ def parse(argv):
                    help="read sets/<NAME>.jsonl")
     p.add_argument("--gate", choices=["daily", "release", "all"],
                    help="which gate's cases to run, daily by default")
+    p.add_argument("--summarize-after", type=int, metavar="N",
+                   help="set the summarize threshold (steps) before every case; "
+                        "overrides summarize_after in the cases")
     p.add_argument("--brief", action="store_true",
                    help="one line per case, without the case details")
     p.add_argument("--dry-run", action="store_true",
@@ -39,6 +42,9 @@ def main(argv):
         os.environ["SET"] = args.set_name
     if args.gate is not None:
         os.environ["GATE"] = "" if args.gate == "all" else args.gate
+
+    if args.summarize_after is not None:
+        os.environ["SUMMARIZE_AFTER"] = str(args.summarize_after)
 
     if args.brief:
         os.environ["BRIEF"] = "1"

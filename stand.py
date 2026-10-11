@@ -112,6 +112,15 @@ def set_clock(iso: str | None) -> dict:
     return _call("POST", "/api/_test/clock", {"now": iso})
 
 
+def set_summarize_after(steps: int) -> dict:
+    ""
+    return _call("PUT", "/api/_test/summarize_after", {"steps": int(steps)})
+
+
+def has_span(tree: dict, name: str) -> bool:
+    return any(s.get("name") == name for s in spans(tree))
+
+
 def wait_until_ready(seconds: int = 60) -> None:
     deadline = time.time() + seconds
     last = None

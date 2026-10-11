@@ -68,6 +68,8 @@ def expectation(case: dict) -> str:
     if name == "tool_called_with":
         args = ", ".join(f"{k}={v}" for k, v in (meta.get("args") or {}).items())
         return f"{meta.get('tool')} called with {args}"
+    if name == "has_span":
+        return f"span {meta.get('span')} present"
     if name == "exact_tool_calls":
         return f"tools called exactly {meta.get('expected_tool_calls', [])}"
     if name == "tool_call_count":
@@ -133,6 +135,41 @@ def _answer(row: dict) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def _turn_label(turn) -> str:
+    if isinstance(turn, list):
+        return "T" + "/".join(str(t) for t in turn)
+    return f"T{turn}"
+
+
+def _check_lines(row: dict, columns: int, colour: bool) -> list[str]:
+    ""
+    checks = (row.get("verdict") or {}).get("checks") or []
+    out = []
+    for i, c in enumerate(checks):
+        ok = c["passed"]
+        state = paint("ok  " if ok else "FAIL", "green" if ok else "red", colour)
+        tag = f" [{c['defect']}]" if c.get("defect") else ""
+        kind = "precondition: " if c.get("precondition") else ""
+        text = f"{_turn_label(c['turn']):<8}{state} {kind}{c.get('label') or c['assertion']}{tag}"
+        if not ok and c.get("detail"):
+            text += f" -> {c['detail']}"
+        out += _field("checks" if i == 0 else "", text, columns, limit=3)
+    return out
+
+
+def _dialog_lines(case: dict, row: dict, columns: int, colour: bool) -> list[str]:
+    ""
+    out = []
+    for t in row.get("transcript") or []:
+        out += _field(f"turn {t['turn']}", "U: " + t["user"], columns, limit=2)
+        out += _field("", "A: " + " ".join(t["answer"].replace("**", "").split()),
+                      columns, limit=2, style="dim", colour=colour)
+        if t.get("summarized"):
+            out += _field("", "~ agent.summarize ran on this turn", columns,
+                          style="cyan", colour=colour)
+    return out
+
+
 def case_lines(case: dict, row: dict, brief: bool = False,
                colour: bool = False, columns: int | None = None) -> list[str]:
     if brief:
@@ -149,6 +186,14 @@ def case_lines(case: dict, row: dict, brief: bool = False,
             f"{row['layer']:<11} {verdict['assertion']}  "
             f"{paint(timing, 'dim', colour)}")
     out = [head]
+    if row.get("transcript"):
+        out += _dialog_lines(case, row, columns, colour)
+        out += _check_lines(row, columns, colour)
+        if not verdict.get("checks") or verdict["assertion"] == "precondition":
+            out += _field("verdict", verdict["detail"] or "ok", columns, limit=4,
+                          style=MARK_STYLE[status], colour=colour)
+        out.append("")
+        return out
     asked = questions(case)
     for i, text in enumerate(asked, 1):
         label = "question" if len(asked) == 1 else f"turn {i}"
