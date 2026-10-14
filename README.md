@@ -15,12 +15,19 @@ Python локально не потрібен: ранер іде в Docker, у �
 Корінь курсу завжди `~/paypilot`: стенд у `~/paypilot/paypilot-stand`, цей
 репозиторій — у `~/paypilot/l05` (папка уроку, поруч із `l02`).
 
-1. Підняти локальний стенд: у `~/paypilot/paypilot-stand` — `docker compose up -d --build`, потім `docker compose exec stand python scripts/doctor.py`.
+1. Підняти локальний стенд: у 
+`~/paypilot/paypilot-stand` — `docker compose up -d --build`,
+потім 
+`docker exec -it paypilot-stand-stand-1 python scripts/doctor.py`.
 2. Склонувати цей репозиторій поруч зі стендом:
-   `git clone https://github.com//paypilot-l05-eval.git ~/paypilot/l05`
-3. `cd ~/paypilot/l05` і перевірити набір: `docker compose run --rm eval --dry-run`.
-4. Прогнати набір на справній версії: `docker compose run --rm eval --profile clean`.
-5. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05`.
+   `git clone https://github.com/alex-pancho/paypilot-l05-eval ~/paypilot/l05`
+3. Встановити згортку після 2х кроків:
+   `bash api.sh PUT /api/_test/summarize_after '{"steps": 2}'`
+   Перевірити:
+   `bash api.sh GET /api/_test/summarize_after`
+4. `cd ~/paypilot/l05` і перевірити набір: `docker compose run --rm eval --dry-run`.
+5. Прогнати набір на справній версії: `docker compose run --rm eval --profile clean`.
+6. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05`.
 
 Команди влаштовані як на L02: усе після `eval` — прапорці.
 
@@ -32,7 +39,6 @@ Python локально не потрібен: ранер іде в Docker, у �
 |---|---|
 | `complaints.md` | двадцять скарг C-01…C-20, той самий корпус, що на L02 |
 | `triage.md` | дошка кроку 1: скарги в трьох купках за відтворюваністю — придатні одразу, після добору контексту, непридатні |
-| `case-FX-004.json` | перший кейс набору, розгорнутий по полях |
 | `sets/l05.jsonl` | набір L05: контрольний FX-004 і діалоги MEM-001, MEM-001-AMT, MEM-002; по одному кейсу на рядок |
 | `generate_from_engines.py` | генератор: викликає рушії стенду і друкує кейси з готовими очікуваннями |
 | `ladder.md` | дошка драбини перевірок: рівень перевірки для кожного кейса |
@@ -57,7 +63,7 @@ Python локально не потрібен: ранер іде в Docker, у �
 
 ```bash
 mkdir -p ~/paypilot
-git clone https://github.com//paypilot-l05-eval.git ~/paypilot/l05
+git clone https://github.com/alex-pancho/paypilot-l05-eval ~/paypilot/l05
 cd ~/paypilot/l05
 docker compose run --rm eval --dry-run
 ```
@@ -87,13 +93,12 @@ echo $?
 лише в терміналі; змінна `NO_COLOR` його вимикає.
 
 ```text
-FAIL  FX-004     L2 generation  tool_grounded_numeric  3.2s, 4876 tokens
-      question  I'm CUS-0007. Convert 2000 EUR to USD. What is the final amount I receive?
-      expected  quote_fx.final_amount = 2154.35 +/-0.02, and the same figure in the answer
-      tool      quote_fx(customer_id=CUS-0007, amount=2000, from_currency=EUR, to_currency=USD)
-                -> final_amount=2157.608696, from_currency=EUR, to_currency=USD, …
-      verdict   quote_fx.final_amount = [2157.608696], expected 2154.35 +/-0.02
-      answer    Here's your conversion breakdown: …
+FAIL  MEM-001    L4 memory      dialog  7.3s, 16351 tokens
+      turn 1    U: I'm CUS-0004. Please open a dispute for transaction TX-0401 with reason code duplicate_charge, amount
+                240.00 EUR.
+                A: Dispute successfully opened for transaction TX-0401 under reason code duplicate_charge for the amount
+                of 240.00 EUR. Dispute ID: 1.
+      turn 2    U: Thanks. How does the review process work in general?
 ```
 
 Набір — це 4 кейси, 3 з них діалоги по 4–7 повідомлень. Код
@@ -180,56 +185,6 @@ docker compose run --rm eval --profile clean --only FX-004,LIM-003
 curl -s -X PUT localhost:8000/api/_test/profile \
   -H 'Content-Type: application/json' -d '{"profile":"clean"}'
 ```
-
-## Мок моделі
-
-Частина 4 заняття перевіряє виклики інструментів без моделі. Між стендом і
-API моделі стає MockServer: стенд, як і завжди, шле запит на адресу
-провайдера, але йде через проксі (`HTTPS_PROXY`) і довіряє його
-сертифікату (`SSL_CERT_FILE`), а відповідає мок за сценарієм з
-`mock/expectations.json`. Код стенду не змінюється, ключ не потрібен:
-запит до моделі не доходить. Override-файл перемикає стенд на провайдер
-`openai` з фіктивним ключем, бо для мока провайдер — лише формат запиту.
-
-```bash
-cd ~/paypilot/l05
-docker compose up -d llm-mock
-cd ~/paypilot/paypilot-stand
-docker compose -f docker-compose.yml -f ../l05/mock/stand.override.yml up -d --force-recreate stand
-cd ~/paypilot/l05
-docker compose run --rm eval --set l05-mock --profile clean
-```
-
-Набір `sets/l05-mock.jsonl` — ті самі FX-004, LIM-003 і DIS-006 плюс
-FX-004-CALL: перевірка `tool_called_with`, що стенд виконав саме той
-виклик, який повернула «модель», з тими самими аргументами. На `clean` має
-бути 4/4, на `lesson-03` — 1/4: виклик правильний, результати інструментів
-ні.
-
-Що стенд надіслав моделі, показує журнал мока, а `verify` перевіряє
-взаємодію: чи повернув стенд результат інструмента у другому запиті.
-
-```bash
-docker compose run --rm eval python mock/journal.py
-curl -s -o /dev/null -w '%{http_code}\n' -X PUT localhost:1080/mockserver/verify \
-  -H 'Content-Type: application/json' -d @mock/verify-fx-004.json
-```
-
-`202` — перевірка пройшла; інакше MockServer друкує, що очікував і що
-отримав. Повернути справжню модель:
-
-```bash
-cd ~/paypilot/paypilot-stand
-docker compose up -d --force-recreate stand
-cd ~/paypilot/l05
-docker compose stop llm-mock
-```
-
-Сертифікат `mock/mockserver-ca.pem` — стандартний CA MockServer, його
-приватний ключ опублікований у репозиторії MockServer, тому цей мок
-годиться лише для локального стенду. `/health` за проксі й далі показує
-`"provider":"openai"`: чи стенд за моком, видно з журналу мока, а не зі
-стенду.
 
 ## Змінні ранера
 
