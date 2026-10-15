@@ -19,19 +19,22 @@ Python локально не потрібен: ранер іде в Docker, у �
 `~/paypilot/paypilot-stand` — `docker compose up -d --build`,
 потім 
 `docker exec -it paypilot-stand-stand-1 python scripts/doctor.py`.
-2. Склонувати цей репозиторій поруч зі стендом:
+2. Склонувати допоміжний репозиторій поруч зі стендом:
    `git clone https://github.com/alex-pancho/paypilot-l05-eval ~/paypilot/l05`
+   Перейти у папку репозиторію:
+   `cd ~/paypilot/l05`
 3. Встановити згортку після 2х кроків:
    `bash api.sh PUT /api/_test/summarize_after '{"steps": 2}'`
    Перевірити:
    `bash api.sh GET /api/_test/summarize_after`
-4. `cd ~/paypilot/l05` і перевірити набір: `docker compose run --rm eval --dry-run`.
-5. Прогнати набір на справній версії: `docker compose run --rm eval --profile clean`.
-6. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05`.
+4. Задати час прогону "2026-09-15T10:00:00+00:00":
+    `bash api.sh PUT /api/_test/clock`
+5. Перевірити запуск набору: `docker compose run --rm eval --dry-run`.
+6. Прогнати набір на справній версії: `docker compose run --rm eval --profile clean`.
+7. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05`.
 
 Команди влаштовані як на L02: усе після `eval` — прапорці.
 
-Деталі кожного кроку нижче.
 
 ## Що в репозиторії
 
@@ -150,7 +153,7 @@ PowerShell його показує `$LASTEXITCODE`. Читай його одра
 |---|---|---|
 | `MEM-001` | C-18: диспут TX-0401, 4 ходи | D07: на ході 4 має бути `duplicate_charge`, а не `service_not_rendered` |
 | `MEM-001-AMT` | ті самі 3 ходи, на 4-му питання про суму | D06: сума 240.00 на ході 4 |
-| `MEM-002` | C-07: Nordwind Air, 7 ходів | D06 на ході 5 (агент знову питає суму), D07 на ході 7 (60 днів замість 120); ходи 1–4 — контроль до втрати |
+| `CONV-002` | C-07: диспут TX-0401 у 7 ходів | D06 на ході 5 (агент знову питає суму), D07 на ході 7 (60 днів замість 120); ходи 1–4 — контроль до втрати |
 | `FX-004` | одне повідомлення | контроль: набір не червоніє «взагалі всюди» |
 
 Очікування: `--profile clean` дає 4/4, `--profile lesson-05` дає 1/4 (падають
