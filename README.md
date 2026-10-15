@@ -28,7 +28,9 @@ Python локально не потрібен: ранер іде в Docker, у �
    Перевірити:
    `bash api.sh GET /api/_test/summarize_after`
 4. Задати час прогону "2026-09-15T10:00:00+00:00":
-    `bash api.sh PUT /api/_test/clock`
+    `bash api.sh PUT /api/_test/clock '{"now":null}'`
+   Перевірити:
+    `bash api.sh GET /api/_test/clock`
 5. Перевірити запуск набору: `docker compose run --rm eval --dry-run`.
 6. Прогнати набір на справній версії: `docker compose run --rm eval --profile clean`.
 7. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05`.
@@ -73,7 +75,7 @@ docker compose run --rm eval --dry-run
 
 `--dry-run` нічого не викликає: друкує хеш набору і зведення — скільки
 кейсів, які оракули, які рівні перевірок. Для демо-набору перший рядок —
-`set l05.jsonl set_hash 21b4a7036d92`. Два прогони можна порівнювати, лише
+`set l05.jsonl set_hash 83cf9eeefa09`. Два прогони можна порівнювати, лише
 коли хеш однаковий: зміниш хоч один символ у наборі — зміниться хеш.
 
 Прогін і код повернення:
