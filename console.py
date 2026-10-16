@@ -157,6 +157,19 @@ def _check_lines(row: dict, columns: int, colour: bool) -> list[str]:
     return out
 
 
+def _stats_lines(row: dict, columns: int) -> list[str]:
+    ""
+    st = row.get("run_stats")
+    if not st or st["runs"] < 2:
+        return []
+    firsts = ", ".join("-" if x is None else str(x) for x in st["first_fail_turns"])
+    text = (f"{st['passed']}/{st['runs']} runs passed; first failing turn per run: "
+            f"{firsts}")
+    if st["median"] is not None:
+        text += f"; median {st['median']}, range {st['min']}-{st['max']}"
+    return _field("runs", text, columns, limit=3)
+
+
 def _dialog_lines(case: dict, row: dict, columns: int, colour: bool) -> list[str]:
     ""
     out = []
@@ -189,6 +202,7 @@ def case_lines(case: dict, row: dict, brief: bool = False,
     if row.get("transcript"):
         out += _dialog_lines(case, row, columns, colour)
         out += _check_lines(row, columns, colour)
+        out += _stats_lines(row, columns)
         if not verdict.get("checks") or verdict["assertion"] == "precondition":
             out += _field("verdict", verdict["detail"] or "ok", columns, limit=4,
                           style=MARK_STYLE[status], colour=colour)

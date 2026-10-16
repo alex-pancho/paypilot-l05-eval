@@ -12,9 +12,11 @@ x-eval: &eval
 
 x-eval-env: &eval-env
   SET: ${SET:-l05}
-  GATE: ${GATE:-daily}
+  GATE: ${GATE:-}
   CASE: ${CASE:-}
   SUMMARIZE_AFTER: ${SUMMARIZE_AFTER:-}
+  REPEAT: ${REPEAT:-}
+  TRACES: ${TRACES:-}
   PYTHONDONTWRITEBYTECODE: "1"
 
 services:

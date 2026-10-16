@@ -33,9 +33,24 @@ Python локально не потрібен: ранер іде в Docker, у �
     `bash api.sh GET /api/_test/clock`
 5. Перевірити запуск набору: `docker compose run --rm eval --dry-run`.
 6. Прогнати набір на справній версії: `docker compose run --rm eval --profile clean`.
-7. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05`.
+7. Прогнати на зламаній: `docker compose run --rm eval --profile lesson-05 --traces`. 
+
+> **УВАГА!** для більш розлогого аналізу потрібно зберігати трейси, переконайтеся, що вказали ключ `--traces`
 
 Команди влаштовані як на L02: усе після `eval` — прапорці.
+```
+  -h, --help            show this help message and exit
+  --profile NAME        switch the stand to this profile before the run
+  --only IDS            run only these cases, comma-separated
+  --set NAME            read sets/<NAME>.jsonl
+  --gate {daily,release,all}
+                        which gate's cases to run, daily by default
+  --summarize-after N   set the summarize threshold (steps) before every case; overrides summarize_after in the cases
+  --repeat N            run every selected case N times (overrides runs in the case)
+  --traces              save the full trace of every turn to reports/traces/<stamp>/
+  --brief               one line per case, without the case details
+  --dry-run             print the set hash and coverage, call nothing
+```
 
 
 ## Що в репозиторії

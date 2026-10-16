@@ -1,6 +1,7 @@
 ""
 import json
 import os
+import statistics
 import sys
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ REPORTS_DIR = HERE / "reports"
 RUBRIC_VERSION = os.environ.get("RUBRIC_VERSION", "rubric.v1")
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL") or "not-used"
 SUMMARIZE_SPAN = "agent.summarize"
+RUN_STAMP = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 
 
 
@@ -121,15 +123,14 @@ def _apply(name: str, p: dict, case: dict, answer: str, tree: dict,
 
 def _dialog(case: dict, results: list[dict]) -> A.Verdict:
     ""
-    verdicts = []
-    for i, run in enumerate(results, 1):
-        v = _dialog_run(case, run)
-        if not v.passed and len(results) > 1:
-            v.detail = f"run {i}/{len(results)}: {v.detail}"
-        verdicts.append(v)
-        if not v.passed:
-            break
-    return verdicts[-1]
+    verdicts = [_dialog_run(case, run) for run in results]
+    bad = [(i, v) for i, v in enumerate(verdicts, 1) if not v.passed]
+    if not bad:
+        return verdicts[-1]
+    i, v = bad[0]
+    if len(results) > 1:
+        v.detail = f"{len(bad)}/{len(results)} runs failed; run {i}: {v.detail}"
+    return v
 
 
 def _dialog_run(case: dict, run: dict) -> A.Verdict:
@@ -262,23 +263,86 @@ def _one_run(case: dict) -> dict:
     }
 
 
+def _fragments(calls: list[dict]) -> list[dict]:
+    ""
+    out = []
+    for c in calls:
+        if c["name"] == "search_knowledge_base" and isinstance(c.get("result"), dict):
+            out += c["result"].get("fragments") or []
+    return out
+
+
 def _transcript(run: dict) -> list[dict]:
-    return [{"turn": i,
-             "user": t["question"],
-             "answer": t["answer"][:400],
-             "summarized": stand.has_span(t["trace"] or {}, SUMMARIZE_SPAN),
-             "tools": [c["name"] for c in stand.tool_calls(t["trace"] or {})]}
-            for i, t in enumerate(run["turns"], 1)]
+    ""
+    out = []
+    for i, t in enumerate(run["turns"], 1):
+        tree = t["trace"] or {}
+        calls = stand.tool_calls(tree)
+        out.append({"turn": i,
+                    "user": t["question"],
+                    "answer": t["answer"],
+                    "summarized": stand.has_span(tree, SUMMARIZE_SPAN),
+                    "tools": [c["name"] for c in calls],
+                    "tool_calls": calls,
+                    "fragments": [{"id": f.get("id"), "text": f.get("text", "")}
+                                  for f in _fragments(calls)],
+                    "usage": t["usage"]})
+    return out
+
+
+def _turn_no(turn) -> int:
+    return turn if isinstance(turn, int) else min(turn)
+
+
+def _runs_detail(case: dict, results: list[dict]) -> list[dict]:
+    ""
+    detail = []
+    for i, run in enumerate(results, 1):
+        v = _dialog_run(case, run)
+        failed = sorted({_turn_no(o["turn"]) for o in v.checks
+                         if not o["passed"] and not o["precondition"]})
+        detail.append({"run": i, "passed": v.passed,
+                       "precondition_failed": v.assertion == "precondition",
+                       "failed_turns": failed,
+                       "first_fail_turn": failed[0] if failed else None,
+                       "transcript": _transcript(run)})
+    return detail
+
+
+def _run_stats(detail: list[dict]) -> dict:
+    firsts = [d["first_fail_turn"] for d in detail if d["first_fail_turn"]]
+    return {"runs": len(detail),
+            "passed": sum(1 for d in detail if d["passed"]),
+            "first_fail_turns": [d["first_fail_turn"] for d in detail],
+            "min": min(firsts) if firsts else None,
+            "max": max(firsts) if firsts else None,
+            "median": statistics.median(firsts) if firsts else None}
+
+
+def _dump_traces(case_id: str, run_no: int, run: dict) -> str:
+    ""
+    folder = REPORTS_DIR / "traces" / RUN_STAMP
+    folder.mkdir(parents=True, exist_ok=True)
+    for n, t in enumerate(run["turns"], 1):
+        path = folder / f"{case_id}-run{run_no}-turn{n}.json"
+        path.write_text(json.dumps(
+            {"case": case_id, "run": run_no, "turn": n, "user": t["question"],
+             "answer": t["answer"], "trace": t["trace"]},
+            indent=2, ensure_ascii=False), encoding="utf-8")
+    return str(folder.relative_to(HERE))
 
 
 def run_case(case: dict) -> dict:
     meta = case["additional_metadata"]
-    runs = int(meta.get("runs", 1))
+    runs = int(os.environ.get("REPEAT") or meta.get("runs", 1))
     results = []
     skipped = False
+    traces_dir = None
     try:
-        for _ in range(runs):
+        for k in range(1, runs + 1):
             results.append(_one_run(case))
+            if os.environ.get("TRACES") == "1":
+                traces_dir = _dump_traces(case["id"], k, results[-1])
         verdict = evaluate(case, results)
     except JudgeUnavailable as e:
         verdict = A.Verdict(False, 7, "judge", str(e))
@@ -304,6 +368,11 @@ def run_case(case: dict) -> dict:
     }
     if case.get("turns") and results:
         row["transcript"] = _transcript(results[-1])
+        if meta["assertion"] == "dialog":
+            row["runs_detail"] = _runs_detail(case, results)
+            row["run_stats"] = _run_stats(row["runs_detail"])
+    if traces_dir:
+        row["traces_dir"] = traces_dir
     return row
 
 
@@ -326,8 +395,9 @@ def main() -> int:
         cases = [c for c in cases
                  if c["additional_metadata"].get("gate", "daily") == gate]
         if not cases:
-            print(f"no cases with gate={gate} in {set_name}")
-            return 0
+            print(f"no cases with gate={gate} in {set_name} — nothing was run. "
+                  "Use --gate all (or the right gate)")
+            return 1
 
     print(f"set {set_name} ({len(cases)} cases)  profile {profile_now}  "
           f"prompt {prompt_ver}" + (f"  gate {gate}" if gate else ""))
@@ -381,7 +451,7 @@ def main() -> int:
         "cases": rows,
     }
     REPORTS_DIR.mkdir(exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    stamp = RUN_STAMP
     out = REPORTS_DIR / f"{set_name}-{profile_now}-{stamp}.json"
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False),
                    encoding="utf-8")

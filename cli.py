@@ -23,6 +23,10 @@ def parse(argv):
     p.add_argument("--summarize-after", type=int, metavar="N",
                    help="set the summarize threshold (steps) before every case; "
                         "overrides summarize_after in the cases")
+    p.add_argument("--repeat", type=int, metavar="N",
+                   help="run every selected case N times (overrides runs in the case)")
+    p.add_argument("--traces", action="store_true",
+                   help="save the full trace of every turn to reports/traces/<stamp>/")
     p.add_argument("--brief", action="store_true",
                    help="one line per case, without the case details")
     p.add_argument("--dry-run", action="store_true",
@@ -45,6 +49,11 @@ def main(argv):
 
     if args.summarize_after is not None:
         os.environ["SUMMARIZE_AFTER"] = str(args.summarize_after)
+
+    if args.repeat is not None:
+        os.environ["REPEAT"] = str(args.repeat)
+    if args.traces:
+        os.environ["TRACES"] = "1"
 
     if args.brief:
         os.environ["BRIEF"] = "1"
